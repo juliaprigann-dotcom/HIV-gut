@@ -1,0 +1,492 @@
+### Correlation analysis with inflammatory Crypts --- ###
+
+CCRectum_obj <- readRDS("/Users/jkazmierski/CCRectum_obj.rds")
+
+###---Fig5A --- Dotplot inflammatory crypt cells --- ###
+
+features <- c("OLFM4", "MYC", "LGR5", "SOX9", "CTNNB1",
+              "IL1B", "CLU","FZD7", "TNFAIP3", "CCL20")
+Idents(CCRectum_obj) <- CCRectum_obj$celltype
+
+DotPlot(
+  CCRectum_obj,
+  features = features,
+  idents = c("Colonocyte", "REG4 Crypt", "Base Colonocyte","TA","Stem","Inflammatory Crypt"),
+  dot.scale = 8,
+  scale.max = 75,
+  col.min = -2,
+  col.max = 2,
+  group.by = "celltype"
+) + RotatedAxis()+ scale_color_gradientn(colors = c("blue", "white", "red"), limits = c(-2, 2))
+
+ggsave (filename = "Dotplot_Inflammatorycrypt_marker_rectum.svg", device = "svg")
+
+Idents(CCIleum_obj) <- CCIleum_obj$celltype
+
+DotPlot(
+  CCIleum_obj,
+  features = features,
+  idents = c("Enterocyte", "Primed progenitors", "Cycling progenitors","Stem"),
+  dot.scale = 8,
+  scale.max = 75,
+  col.min = -2,
+  col.max = 2,
+  group.by = "celltype"
+) + RotatedAxis()+ scale_color_gradientn(colors = c("blue", "white", "red"), limits = c(-2, 2))
+
+ggsave (filename = "Dotplot_Inflammatorycrypt_marker_Ileum.svg", device = "svg")
+
+###--- Fig5B --- C3_C5_subcluster analysis --- ###
+
+Idents(CCRectum_obj) <- CCRectum_obj$cluster_cellcharter_k9
+clusters_to_subcluster <- c("3", "5")
+cells_to_keep <- WhichCells(CCRectum_obj, idents = clusters_to_subcluster)
+
+CCRectum_C35_obj <- subset(CCRectum_obj, cells = cells_to_keep)
+
+CCRectum_C35_obj <- SCTransform(CCRectum_C35_obj, assay = "RNA")
+CCRectum_C35_obj <- RunPCA(CCRectum_C35_obj, npcs = 15, features = rownames(CCRectum_C35_obj))
+CCRectum_C35_obj <- RunUMAP(CCRectum_C35_obj, dims = 1:15)
+CCRectum_C35_obj <- FindNeighbors(CCRectum_C35_obj, reduction = "pca", dims = 1:15)
+CCRectum_C35_obj <- FindClusters(CCRectum_C35_obj, resolution = 0.50)
+
+DimPlot(CCRectum_C35_obj,  group.by = "seurat_clusters",  label = T
+) + coord_fixed(ratio = 1.5)
+
+ggsave (filename = "UMAP_Rectum_C35_Subcluster.svg", device = "svg")
+
+cluster_markers <- FindAllMarkers(
+  CCRectum_C35_obj,
+  group.by = "seurat_clusters",
+  assay = "SCT",
+  slot = "data",
+  only.pos = TRUE,
+  min.pct = 0.1,
+  logfc.threshold = 0.1
+)
+
+write.csv(
+  cluster_markers,
+  "Rectum_C35_subclustermarker.csv",
+  row.names = FALSE
+)
+
+cluster_to_celltype <- c(
+  "Follicular B",      # 0
+  "CD4 T",      # 1
+  "GC B",      # 2
+  "Fibroblast",     # 3
+  "Goblet",      # 4
+  "Crypt",     # 5
+  "Myeloid",      # 6
+  "Colonocyte",      # 7
+  "CD8/Colonocyte",      # 8
+  "Follicular T",  # 9
+  "Plasma",      # 10
+  "Myeloid/Colonocyte",      # 11
+  "Mast",     # 12
+  "Stromal niche" # 13
+)
+
+# Map clusters to cell types and save as new metadata column
+CCRectum_C35_obj$celltype2 <- cluster_to_celltype[CCRectum_C35_obj$seurat_clusters]
+
+table(CCRectum_C35_obj$seurat_clusters, CCRectum_C35_obj$celltype2) 
+
+DimPlot(CCRectum_C35_obj,  group.by = "celltype2",  label = T
+) + coord_fixed(ratio = 1.5)
+
+ggsave (filename = "UMAP_Rectum_C35_celltype2.svg", device = "svg")
+
+###CellChat signaling of selected C35 ROIs###
+
+
+###--- Wnt regenerative singliang ---###
+
+markers <- FindMarkers(
+  object = CCRectum_obj,
+  ident.1 = "Inflammatory Crypt",
+  ident.2 = "TA",
+  test.use = "wilcox"
+)
+
+write.csv(markers, "CCRectum_InflammCryptvsTA.csv", row.names = T)
+
+markers2 <- FindMarkers(
+  object = CCRectum_obj,
+  ident.1 = "Inflammatory Crypt",
+  ident.2 = "Stem",
+  test.use = "wilcox"
+)
+
+write.csv(markers2, "CCRectum_InflammCryptvsStem.csv", row.names = T)
+
+markers3 <- FindMarkers(
+  object = CCRectum_obj,
+  ident.1 = "Inflammatory Crypt",
+  ident.2 = "Base Colonocyte",
+  test.use = "wilcox"
+)
+
+write.csv(markers3, "CCRectum_InflammCryptvsBasecolonocyte.csv", row.names = T)
+
+features <- c("TFRC", "EGFR",  
+               "IMPDH",  
+              "OLFM4", "MYC", "MKI67", "TOP2A", "LGR5", "TYMS", "CDK6", "RNF43",
+              "SOX9", "CTNNB1",
+              "IL1B", "CCL20", "LTB", "TNFAIP3", "CLU","FZD7", "MSLN", "DEPP1")
+
+Idents (CCRectum_obj) <- "celltype"
+
+CCRectum_obj$new_split_group = paste0(CCRectum_obj$"celltype", "_", CCRectum_obj$"HIV_status")
+
+DotPlot(
+  CCRectum_obj,
+  features = features,
+  idents = c("Base Colonocyte","TA","Stem","Inflammatory Crypt"),
+  dot.scale = 8,
+  scale.max = 75,
+  group.by = "celltype"
+)+  coord_flip() + RotatedAxis() +
+  scale_colour_gradient2(low = "blue", mid = "white", high = "red")
+
+DotPlot(object = CCRectum_obj, 
+        features = c("TGFB1", "TNF"), 
+        dot.scale = 8,
+        scale.max = 60,
+        group.by = "celltype")  +  coord_flip() + RotatedAxis() +
+  scale_colour_gradient2(low = "blue", mid = "white", high = "red")
+
+Idents (CCRectum_obj) <- "cluster_cellcharter_k9"
+features <- c("WNT1", "WNT2", "WNT2B", "WNT3", "WNT3A", "WNT4", "WNT5A", 
+              "WNT5B", "WNT6", "WNT7A", "WNT7B", "WNT8A", "WNT8B", "WNT9A",
+              "WNT9B", "WNT10A", "WNT10B", "WTN16",
+             "FZD7", 
+              "CTNNB1")
+CCRectum_obj$new_split_group = paste0(CCRectum_obj$"cluster_cellcharter_k9", "_", CCRectum_obj$"HIV_status")
+
+DotPlot(object = CCRectum_obj, 
+        features = features, 
+        dot.scale = 7,
+        scale.max = 20,
+        idents = c("3", "5"),
+        group.by = "new_split_group")  +  coord_flip() + RotatedAxis() 
+
+ggsave (filename = "Dotplot_C3_C5_WNTcomponents.svg", device = "svg")
+
+###_---WNT Component dotplot in scRNA seq data --- ###
+features <- c("WNT1", "WNT2", "WNT2B", "WNT3", "WNT3A", "WNT4", "WNT5A", 
+              "WNT5B", "WNT6", "WNT7A", "WNT7B", "WNT8A", "WNT8B", "WNT9A",
+              "WNT9B", "WNT10A", "WNT10B", "WTN11")
+scRNA_Rectum_obj$new_split_group = paste0(scRNA_Rectum_obj$"celltype", "_", scRNA_Rectum_obj$"hiv_status")
+
+DotPlot(object = scRNA_Rectum_obj, 
+        features = features, 
+        dot.scale = 7,
+        scale.max = 20,
+        group.by = "new_split_group")  +  coord_flip() + RotatedAxis() 
+
+ggsave (filename = "Dotplot_WNT_scRNA_Rectum.svg", device = "svg")
+
+###-----------------------------------###
+
+features <- c("TGFB1", "TNF")
+
+Idents (CCRectum_obj) <- "cluster_cellcharter_k9"
+
+CCRectum_obj$new_split_group = paste0(CCRectum_obj$"cluster_cellcharter_k9", "_", CCRectum_obj$"HIV_status")
+
+DotPlot(object = CCRectum_obj, 
+        features = features, 
+        dot.scale = 8,
+        scale.max = 40,
+        group.by = "new_split_group")  +  coord_flip() + RotatedAxis() +
+  scale_colour_gradient2(low = "blue", mid = "white", high = "red")
+
+ggsave (filename = "Dotplot_TNF_TGFB1_cluster_HIVsplit_rectum.svg", device = "svg")
+
+
+###GSEA enrichment --- ###
+# Folder containing CSV files
+input_folder <- "/Users/jkazmierski/DE_results"
+output_folder <- "/Users/jkazmierski/GSEA_results"
+
+# Make sure output folder exists
+if (!dir.exists(output_folder)) dir.create(output_folder)
+
+# Load Hallmark gene sets
+mm_hallmark_sets <- msigdbr(
+  species = "Homo sapiens",
+  category = "H"
+)
+
+# List all CSV files in the folder
+csv_files <- list.files(input_folder, pattern = "\\.csv$", full.names = TRUE)
+
+# Function to process a single CSV
+process_gsea <- function(file_path) {
+  # Extract a base name for output
+  base_name <- tools::file_path_sans_ext(basename(file_path))
+  
+  # Read CSV
+  dge_df <- read_csv(file_path)
+  
+  # Map gene symbols
+  dge_mapped_df <- dge_df %>%
+    mutate(
+      gene_symbol_mapped = mapIds(
+        org.Hs.eg.db,
+        keys = gene,  
+        column = "SYMBOL",
+        keytype = "SYMBOL",
+        multiVals = "first"
+      )
+    ) %>%
+    filter(!is.na(gene_symbol_mapped))
+  
+  # Remove duplicates (keep largest abs log2FC)
+  filtered_dge_mapped_df <- dge_mapped_df %>%
+    arrange(desc(abs(avg_log2FC))) %>%
+    distinct(gene_symbol_mapped, .keep_all = TRUE)
+  
+  # Create ranking metric
+  rank_metric <- -log10(filtered_dge_mapped_df$p_val) * sign(filtered_dge_mapped_df$avg_log2FC)
+  names(rank_metric) <- filtered_dge_mapped_df$gene_symbol_mapped
+  rank_metric <- sort(rank_metric, decreasing = TRUE)
+  
+  # Run GSEA
+  gsea_results <- GSEA(
+    geneList = rank_metric,
+    minGSSize = 25,
+    maxGSSize = 1000,
+    pvalueCutoff = 0.05,
+    eps = 0,
+    seed = TRUE,
+    pAdjustMethod = "fdr",
+    TERM2GENE = dplyr::select(mm_hallmark_sets, gs_name, gene_symbol)
+  )
+  
+  # Convert to data frame
+  gsea_result_df <- data.frame(gsea_results@result)
+  
+  # Write output CSV
+  out_file <- file.path(output_folder, paste0(base_name, "_GSEA_results.csv"))
+  write_csv(gsea_result_df, out_file)
+  
+  message("Processed: ", base_name)
+  
+  return(gsea_result_df)
+}
+
+# Run for all CSV files
+gsea_list <- map(csv_files, process_gsea)
+
+######Vln plot 
+
+VlnPlot(CCRectum_obj, features = c("WNT2B"), 
+        group.by = "celltype",
+        idents = c("CCL19/21+ Fibroblast", "Fibroblast", "Stromal/Myeloid"),
+        split.by = "HIV_status",
+        pt.size = 0)
+
+ggsave (filename = "Vlnplot_WNT2b_Fibroblast_rectum.svg", device = "svg")
+
+VlnPlot(CCRectum_obj, features = c("WNT5A"), 
+        group.by = "celltype",
+        idents = c("CCL19/21+ Fibroblast", "Fibroblast", "Stromal/Myeloid"),
+        split.by = "HIV_status",
+        pt.size = 0)
+
+ggsave (filename = "Vlnplot_WNT5a_Fibroblast_rectum.svg", device = "svg")
+
+##Statistical testing##
+
+celltypes <- c("CCL19/21+ Fibroblast", "Fibroblast", "Stromal/Myeloid")
+
+results_df <- do.call(rbind, lapply(celltypes, function(ct) {
+  
+  sub_obj <- subset(CCRectum_obj, idents = ct)
+  df <- FetchData(sub_obj, vars = c("WNT5A", "WNT2B", "HIV_status"))
+  
+  data.frame(
+    celltype = ct,
+    WNT5A_p = wilcox.test(WNT5A ~ HIV_status, data = df)$p.value,
+    WNT2B_p = wilcox.test(WNT2B ~ HIV_status, data = df)$p.value
+  )
+}))
+
+results_df
+
+####Cytokine expression dotplot 
+
+features <- c("TGFB1", "TNF", "MIF", "LTB", "IL6", 
+              "IL1B")
+Idents(CCRectum_obj) <- CCRectum_obj$cluster_cellcharter_k9
+
+CCRectum_obj$new_split_group = paste0(CCRectum_obj$"cluster_cellcharter_k9", "_", CCRectum_obj$"HIV_status")
+
+DotPlot(
+  CCRectum_obj,
+  features = features,
+    dot.scale = 8,
+  idents = c(5, 3),
+  scale.max = 75,
+  col.min = 0,
+  col.max = 2,
+  group.by = "new_split_group"
+) + RotatedAxis()
+
+ggsave (filename = "cytokinedotplot.svg", device = "svg")
+
+
+features <- c("CCL20", "TNFAIP3", "KLRB1", "ITGAE", "RORA", 
+              "CCR7", "CD69")
+Idents(CCRectum_obj) <- CCRectum_obj$celltype
+
+CCRectum_obj$new_split_group = paste0(CCRectum_obj$"celltype", "_", CCRectum_obj$"HIV_status")
+
+DotPlot(
+  CCRectum_obj,
+  features = features,
+  dot.scale = 8,
+  scale.max = 75,
+  col.min = 0,
+  col.max = 2,
+  group.by = "new_split_group"
+) + RotatedAxis()
+
+#####Dotplot for inflammatory crypt cell proportions in C3#####
+
+
+prop_df <- CCRectum_obj@meta.data %>%
+  group_by(organ_patient_id, cluster_cellcharter_k9, celltype) %>%
+  summarise(n = n(), .groups = "drop")  
+
+prop_df <- prop_df %>%
+  group_by(organ_patient_id, cluster_cellcharter_k9) %>%
+  mutate(proportion = n / sum(n)) %>%
+  ungroup()
+
+prop_df %>%
+  group_by(organ_patient_id, cluster_cellcharter_k9) %>%
+  summarise(total = sum(proportion))
+
+prop_df <- prop_df %>%
+  left_join(
+    CCRectum_obj@meta.data %>% 
+      select(organ_patient_id, HIV_status) %>% 
+      distinct(),
+    by = "organ_patient_id"
+  )
+
+mean_prop_df <- prop_df %>%
+  group_by(HIV_status, cluster_cellcharter_k9, celltype) %>%
+  summarise(mean_proportion = mean(proportion), .groups = "drop")
+
+library(tidyr)
+
+mean_prop_wide <- mean_prop_df %>%
+  pivot_wider(
+    names_from = HIV_status,
+    values_from = mean_proportion
+  )
+
+mean_prop_wide <- mean_prop_wide %>%
+  mutate(ratio_HIVpos_over_HIVneg = `hiv_pos` / `hiv_neg`)
+
+write.csv(
+  mean_prop_df,
+  file = "celltype_proportion_per_cluster_HIV.csv",
+  row.names = TRUE
+)
+
+plot_df <- mean_prop_wide %>%
+  pivot_longer(
+    cols = c("hiv_pos", "hiv_neg"),
+    names_to = "HIV_status",
+    values_to = "mean_proportion"
+  ) %>%
+  mutate(
+    log2_ratio = log2(ratio_HIVpos_over_HIVneg)
+  )
+
+plot_df_filtered <- plot_df %>%
+  filter(mean_proportion >= 0.02)
+
+write.csv(
+  plot_df_filtered,
+  file = "Composition_rectum_inflam.csv",
+  row.names = TRUE
+)
+
+plot_df_filtered <- read.csv ("Composition_rectum_inflam.csv")
+
+ggplot(plot_df_filtered, aes(
+  x = celltype,
+  y = cluster_cellcharter_k9,
+  size = mean_proportion,
+  color = log2_ratio
+)) +
+  geom_point() +
+  scale_color_gradient2(
+    low = "blue",
+    mid = "lightgrey",
+    high = "red",
+    midpoint = -0.5
+  ) +
+  
+  scale_size(range = c(1, 15)) +
+  facet_wrap(~ HIV_status, ncol = 2) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major = element_line(color = "grey95")
+  ) +
+  labs(
+    x = "Cell Type",
+    y = "Cluster",
+    color = "log2(HIV+/HIV-)",
+    size = "Mean Proportion"
+  )
+
+ggsave (filename = "dotplot_celltypecompositions.svg", device = 
+          "svg")
+
+
+#####----Dotplot for TNF and TGFB1 expression ---- #####
+
+features <- c("TNF", "TGFB1")
+Idents(CCRectum_obj) <- CCRectum_obj$cluster_cellcharter_k9
+
+CCRectum_obj$new_split_group = paste0(CCRectum_obj$"cluster_cellcharter_k9", "_", CCRectum_obj$"HIV_status")
+
+DotPlot(
+  CCRectum_obj,
+  features = features,
+  dot.scale = 8,
+  scale.max = 60,
+  col.min = 0,
+  col.max = 2,
+  group.by = "new_split_group"
+) + RotatedAxis()
+
+ggsave (filename = "dotplot_TNF_TGFB1_cellcharterclusterk9.svg", device = 
+          "svg")
+
+features <- c("TNF", "TGFB1")
+Idents(CCRectum_obj) <- CCRectum_obj$celltype
+
+CCRectum_obj$new_split_group = paste0(CCRectum_obj$"celltype", "_", CCRectum_obj$"HIV_status")
+
+DotPlot(
+  CCRectum_obj,
+  features = features,
+  dot.scale = 8,
+  scale.max = 75,
+  col.min = 0,
+  col.max = 2,
+  group.by = "celltype"
+) + RotatedAxis()
+
+ggsave (filename = "dotplot_TNF_TGFB1_celltype.svg", device = 
+          "svg")
