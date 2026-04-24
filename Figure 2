@@ -1,0 +1,64 @@
+#####Figure 2 Script ######
+
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+
+#Load objects 
+CCIleum_obj <- readRDS("/Users/jkazmierski/CellCharterIleum_obj.rds")
+CCIleum_C5_obj <- readRDS("/Users/jkazmierski/CCIleum_C5_obj.rds")
+
+### --- Fig2 --- CXCL9/10/11 expression comparison in HIV+ --- ### 
+
+VlnPlot(CCIleum_C5_obj, features = c("CXCL9", "CXCL10", "CXCL11"), 
+        split.by = "hiv_status",
+        group.by = "cluster_cellcharter_k9",
+         pt.size = 0)
+
+Idents (CCIleum_C5_obj) <- "celltype2"
+
+features <- c("CXCL9", "CXCL10", "CXCL11" )
+
+CCIleum_C5_obj$new_split_group = paste0(CCIleum_C5_obj$"celltype2", "_", CCIleum_C5_obj$"hiv_status")
+
+DotPlot(object = CCIleum_C5_obj, 
+        features = features, 
+        dot.scale = 8,
+        scale.max = 60,
+        idents = c("CD8 T", "CD8/Epithelial", "GC B cell", "Myeloid"),
+        group.by = "new_split_group")  +  coord_flip() + RotatedAxis() +
+  scale_colour_gradient2(low = "blue", mid = "white", high = "red")
+
+###---Fig2G --- Pseudobulk to show CCL expression ---###
+
+agg <- AggregateExpression(
+  CCIleum_C5_obj,
+  features = c("CCL3", "CCL4", "CCL5"),
+  group.by = c("hiv_status", "organ_patient_id")
+)
+
+# Extract RNA assay matrix
+mat <- agg$RNA
+
+# Convert to data frame
+df <- as.data.frame(mat)
+
+# Add gene names as a column
+df$gene <- rownames(df)
+
+# Write to CSV
+write.csv(df, file = "aggregate_expression.csv", row.names = FALSE)
+
+
+### --- Fig2F --- CCL signaling expression --- ###
+
+features <- c("CCL3", "CCL4", "CCL5")
+
+DotPlot(object = CCIleum_C5_obj, 
+        features = features, 
+        dot.scale = 10,
+        scale.max = 50,
+        group.by = "celltype2") + RotatedAxis() +
+  scale_colour_gradient2(low = "blue", mid = "white", high = "red")
+
+ggsave (filename = "Fig2F_CCL_expressiondotplot.svg", device = "svg")
