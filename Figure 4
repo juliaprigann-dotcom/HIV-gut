@@ -1,0 +1,203 @@
+###--- Fig4A Cell type abundance in spatial data --- ###
+
+df_sample <- CCRectum_obj@meta.data %>%
+  group_by(organ_patient_id, celltype) %>%  
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(organ_patient_id) %>%           
+  mutate(freq = n / sum(n))    
+
+write.csv(df_sample, file = "Rectum_spatial_celltypeabundance.csv",
+          row.names = FALSE)
+
+df_sample <- CCRectum_obj@meta.data %>%
+  group_by(organ_patient_id, cluster_cellcharter_k9) %>%  
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(organ_patient_id) %>%           
+  mutate(freq = n / sum(n))    
+
+write.csv(df_sample, file = "Rectum_spatial_k9clusterabundance.csv",
+          row.names = FALSE)
+###Compared to Ileum ###
+df_sample <- CCIleum_obj@meta.data %>%
+  group_by(organ_patient_id, celltype) %>%  
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(organ_patient_id) %>%           
+  mutate(freq = n / sum(n))    
+
+write.csv(df_sample, file = "Ileum_spatial_celltypeabundance.csv",
+          row.names = FALSE)
+
+###---C5 subcluster analysis ---###
+
+Idents(CCRectum_obj) <- CCRectum_obj$cluster_cellcharter_k9
+
+clusters_to_subcluster <- c("5")
+
+cells_to_keep <- WhichCells(CCRectum_obj, idents = clusters_to_subcluster)
+
+CCRectum_C5_obj <- subset(CCRectum_obj, cells = cells_to_keep)
+
+CCRectum_C5_obj <- SCTransform(CCRectum_C5_obj, assay = "RNA")
+CCRectum_C5_obj <- RunPCA(CCRectum_C5_obj, npcs = 15, features = rownames(CCRectum_C5_obj))
+CCRectum_C5_obj <- RunUMAP(CCRectum_C5_obj, dims = 1:15)
+CCRectum_C5_obj <- FindNeighbors(CCRectum_C5_obj, reduction = "pca", dims = 1:15)
+CCRectum_C5_obj <- FindClusters(CCRectum_C5_obj, resolution = 0.40)
+
+ElbowPlot(CCRectum_C5_obj, ndims = 15)
+
+DimPlot(CCRectum_C5_obj,  group.by = "HIV_status",  label = T, 
+        cols =c( "#3d58a7" , "#ee3524"), pt.size = 0.5
+) + coord_fixed(ratio = 1.5)
+
+ggsave (filename = "UMAP_C5_subcluste_HIVstatus.svg", device = "svg")
+
+cluster_markers <- FindAllMarkers(
+  CCRectum_C5_obj,
+  group.by = "seurat_clusters",
+  assay = "SCT",
+  slot = "data",
+  only.pos = TRUE,
+  min.pct = 0.1,
+  logfc.threshold = 0.1
+)
+
+write.csv(
+  cluster_markers,
+  "Rectum_C5_clustermarker.csv",
+  row.names = FALSE
+)
+
+cluster_to_celltype <- c(
+  "Follicular B",      # 0
+  "CD4 T",      # 1
+  "Germinal Center B",      # 2
+  "Myeloid",     # 3
+  "Lymphoid organizer",      # 4
+  "CD8 T",     # 5
+  "T Follicular helper",      # 6
+  "Germinal Center B",      # 7
+  "Endothelial")     # 8
+  
+# Map clusters to cell types and save as new metadata column
+CCRectum_C5_obj$celltype2 <- cluster_to_celltype[CCRectum_C5_obj$seurat_clusters]
+
+# Verify the mapping
+table(CCRectum_C5_obj$seurat_clusters, CCRectum_C5_obj$celltype2) 
+
+DimPlot(CCRectum_C5_obj,  group.by = "celltype2",  label = F, 
+        pt.size = 0.5, 
+        cols = c("#44c3f2", "#f5831f", "#a2cd3a" , "#5a9842", "#fcee29", 
+        "#ee2d2b", "#bc54a0", "#7461aa")
+) + coord_fixed(ratio = 1.5)
+
+ggsave (filename = "UMAP_C5_celltype.svg", device = "svg")
+
+DotPlot(object = CCRectum_C5_obj, 
+        features = c("CXCR4", "CXCR5", "BANK1", "CD3E",
+                     "CD4", "CD38", "CD80", "RGS13", "CD14", "CD68", 
+                     "CXCL14", "CCL19", "CCL21", "IGFBP7", "RBP5",
+                     "CD8A", "CCL5",
+                     "CXCR3", "CTLA4", "PDCD1", "CD40LG",
+                     "CD34", "TIMP3"),
+        dot.scale = 8,
+        scale.max = 50,
+        group.by = "celltype2")  +  coord_flip() + RotatedAxis() +
+  scale_colour_gradient2(low = "blue", mid = "white", high = "red") 
+
+ggsave (filename = "Dotplot_C5_Celltypemarker.svg", device = "svg")
+
+###---4F---C5 subcluster UMAP figures --- ###
+
+DimPlot(CCRectum_C5_obj,  group.by = "HIV_status",  label = T, 
+        cols =c( "#3d58a7" , "#ee3524"), pt.size = 0.5
+) + coord_fixed(ratio = 1.5)
+
+ggsave (filename = "UMAP_C5_subcluste_HIVstatus.svg", device = "svg")
+
+DimPlot(CCRectum_C5_obj_old,  group.by = "ROI",  label = F, 
+        order = T,
+         pt.size = 0.5, split.by = "HIV_status"
+) + coord_fixed(ratio = 1.5)
+
+ggsave (filename = "UMAP_C5_ROI_splitbyHIV.svg", device = "svg")
+
+###---4G---Celltype composition per ROI --- ###
+
+library(dplyr)
+
+df_sample <- CCRectum_C5_obj_old@meta.data %>%
+  group_by(ROI, celltype2) %>%  
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(ROI) %>%           
+  mutate(freq = n / sum(n))    
+
+write.csv(df_sample, file = "C5_celltype_per_ROI.csv", row.names = FALSE)
+
+### --- Fig4 Follicle categotries
+
+ROI_types <- c(
+  "Ctrl_1" = "Ctrl_Aggregate",
+  "Ctrl_2" = "Ctrl_Aggregate",
+  "Ctrl_3" = "Ctrl_Aggregate",
+  "Ctrl_4" = "Ctrl_Aggregate",
+  "Ctrl_5" = "Ctrl_Aggregate",
+  "HIV_1" = "HIV_mature",
+  "HIV_2" = "HIV_mature",
+  "HIV_3" = "HIV_mature",
+  "HIV_4" = "HIV_mature",
+  "HIV_5" = "HIV_Aggregate",
+  "HIV_6" = "HIV_mature",
+  "HIV_7" = "HIV_Aggregate",
+  "HIV_8" = "HIV_Aggregate",
+  "HIV_9" = "HIV_Aggregate"
+)
+
+ROI_status_vec <- ROI_types[CCRectum_C5_obj_old$ROI]
+
+names(ROI_status_vec) <- colnames(CCRectum_C5_obj_old)
+
+CCRectum_C5_obj_old <- AddMetaData(CCRectum_C5_obj_old, 
+                                   ROI_status_vec, col.name = "ROI_status")
+
+# Verify the mapping
+table(CCRectum_C5_obj_old$ROI_status, CCRectum_C5_obj_old$ROI) 
+
+DimPlot(CCRectum_C5_obj_old,  group.by = "ROI_status",  label = F, 
+        order = c("Ctrl_Aggregate", "HIV_Aggregate"),
+        cols =c( "#f9a557" , "#a1cd3a", "#c9cacc" ), pt.size = 0.5
+) + coord_fixed(ratio = 1.5)
+
+ggsave (filename = "UMAP_ROI_status.svg", device = "svg")
+
+
+###---Fig4 Vlnplot proliferation marker in ROIs
+DotPlot(object = CCRectum_C5_obj_old, 
+        features = c("MKI67", "TOP2A", "CD38", "MYC", "PAX5", "BANK1", "TCL1A", 
+                     "FCRLA", "RGS13", "CD83", 
+                     "CD80", "CD86", "CIITA", "SPIB", "HAVCR2",
+                     "TNFSF13B", "IFI27", "LAG3",
+                     "MIF", "TNF", "LTB", "TGFB1"), 
+        dot.scale = 8,
+        scale.max = 60,
+        group.by = "ROI_status")  +  coord_flip() + RotatedAxis() +
+  scale_colour_gradient2(low = "blue", mid = "white", high = "red")
+
+###---Fig4 Pseudobulk Organization Stage --- ### 
+
+pseudo_CCRectum_C5_obj_old <- AggregateExpression(CCRectum_C5_obj_old, assays = "RNA", 
+                                                  return.seurat = T, 
+                                                  group.by = c("ROI_status", "ROI", "celltype2"))
+
+tail(Cells(pseudo_CCRectum_C5_obj_old))
+
+pseudo_CCRectum_C5_obj_old$celltype.ROIstatus <- paste(pseudo_CCRectum_C5_obj_old$celltype2, pseudo_CCRectum_C5_obj_old$ROI_status, sep = "_")
+
+Idents(pseudo_CCRectum_C5_obj_old) <- "celltype.ROIstatus"
+
+bulk.mono.de <- FindMarkers(object = pseudo_CCRectum_C5_obj_old, 
+                            ident.1 = "Myeloid_HIV-Aggregate", 
+                            ident.2 = "Myeloid_Ctrl-Aggregate",
+                            test.use = "wilcox")
+head(bulk.mono.de, n = 15)
+
+write.csv(bulk.mono.de, file = "Myeloid_Aggreagtes.csv", row.names = T)
