@@ -1,0 +1,518 @@
+#---Libraries---#
+library(Seurat)
+library(SeuratData)
+library(ggplot2)
+library(patchwork)
+library(dplyr)
+
+#---Objects---#
+scRNA_Rectum_obj <- readRDS("/Users/jkazmierski/rectum_annotated.rds")
+
+#---Annotate cell types based on Seurat clusters ---#
+cluster_to_celltype <- c(
+  "T cell",      # 0
+  "Crypt cell",      # 1
+  "Crypt cell",      # 2
+  "Colonocyte",     # 3
+  "Goblet",      # 4
+  "Myeloid",     # 5
+  "Colonocyte",      # 6
+  "Plasma cell",      # 7
+  "Crypt cell",      # 8
+  "Fibroblast",  # 9
+  "B cell",      # 10
+  "Fibroblast",      # 11
+  "Colonocyte",     # 12
+  "Plasma cell",  # 13
+  "Plasma cell",      # 14
+  "Plasma cell",      # 15
+  "Plasma cell",     # 16
+  "Fibroblast",      # 17
+  "B cell",  # 18
+  "BEST4+",    # 19
+  "Mast",    # 20
+  "Endothelial",      # 21
+  "Plasma cell",      # 22
+  "Tuft",      # 23
+  "Plasma cell",     # 24
+  "Plasma cell", #25
+  "Fibroblast" # 26 
+)
+
+scRNA_Rectum_obj$celltype <- cluster_to_celltype[scRNA_Rectum_obj$seurat_clusters]
+
+# Verify the mapping
+table(scRNA_Rectum_obj$seurat_clusters, scRNA_Rectum_obj$celltype) 
+
+#------------Fig 3A UMAP celltypes ------------------------------------
+DimPlot(scRNA_Rectum_obj,  group.by = "seurat_clusters", 
+        pt.size = 0.5, label = F) + coord_fixed()
+
+ggsave (filename = "scRNA_Rectum_obj_UMAP_cluster.svg", device = "svg")
+
+#------------Fig3B-----Cell type proportion for each sample ----------------#
+
+df_sample <- scRNA_Rectum_obj@meta.data %>%
+  group_by(orig.ident, celltype) %>%  
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(orig.ident) %>%           
+  mutate(freq = n / sum(n))    
+
+write.csv(df_sample, file = "Rectum_Celltypeproportion_per_sample.csv",
+          row.names = FALSE)
+
+#--------Fig3C-Pseudobulk DEG and GSEA Hallmark Geneset analysis-------------
+#Pseudbulk
+Pseudo_Rectum_scRNA_obj <- AggregateExpression(scRNA_Rectum_obj, assays = "RNA", 
+                                              return.seurat = T, 
+                                              group.by = c("hiv_status", 
+                                                           "celltype", 
+                                                           "orig.ident"))
+
+tail(Cells(Pseudo_Rectum_scRNA_obj))
+
+Pseudo_Rectum_scRNA_obj$celltype.hiv <- paste(Pseudo_Rectum_scRNA_obj$hiv_status, 
+                                              Pseudo_Rectum_scRNA_obj$celltype,
+                                              sep = "_")
+
+Idents(Pseudo_Rectum_scRNA_obj) <- "celltype.hiv"
+
+cell.type.ordered <- unique(Pseudo_Rectum_scRNA_obj$celltype)
+
+cell.type.ordered
+
+# Initialize an empty list to store results
+markers_list_mid <- list()
+
+# Create folder if it does not exist
+if(!dir.exists("DE_results")){
+  dir.create("DE_results")
+}
+
+# Loop through each mid cell type
+for (ct in cell.type.ordered) {
+  
+  ident1 <- paste0("hiv+_", ct)
+  ident2 <- paste0("hiv-_", ct)
+  
+  cells1 <- WhichCells(Pseudo_Rectum_scRNA_obj, idents = ident1)
+  cells2 <- WhichCells(Pseudo_Rectum_scRNA_obj, idents = ident2)
+  
+  if(length(cells1) < 3 | length(cells2) < 3){
+    message("Skipping ", ct, " because one group has fewer than 3 cells.")
+    next
+  }
+  
+  markers <- FindMarkers(
+    object = Pseudo_Rectum_scRNA_obj,
+    ident.1 = ident1,
+    ident.2 = ident2,
+    test.use = "DESeq2"
+  )
+  
+  markers$gene <- rownames(markers)
+  markers_list_mid[[ct]] <- markers
+  
+  file_name <- paste0("DE_results/DE_HIV_", ct, ".csv")
+  write.csv(markers, file = file_name, row.names = FALSE)
+  message("Saved DE results for ", ct, " to ", file_name)
+}
+
+#GSEA for hallmarkpathways
+
+library(readr)
+library(dplyr)
+library(tibble)
+library(org.Hs.eg.db)
+library(clusterProfiler)
+library(msigdbr)
+library(purrr)
+
+# Folder containing CSV files
+input_folder <- "/Users/jkazmierski/DE_results"
+output_folder <- "/Users/jkazmierski/GSEA_results"
+
+# Make sure output folder exists
+if (!dir.exists(output_folder)) dir.create(output_folder)
+
+# Load Hallmark gene sets
+mm_hallmark_sets <- msigdbr(
+  species = "Homo sapiens",
+  category = "H"
+)
+
+# List all CSV files in the folder
+csv_files <- list.files(input_folder, pattern = "\\.csv$", full.names = TRUE)
+
+# Function to process a single CSV
+process_gsea <- function(file_path) {
+  # Extract a base name for output
+  base_name <- tools::file_path_sans_ext(basename(file_path))
+  
+  # Read CSV
+  dge_df <- read_csv(file_path)
+  
+  # Map gene symbols
+  dge_mapped_df <- dge_df %>%
+    mutate(
+      gene_symbol_mapped = mapIds(
+        org.Hs.eg.db,
+        keys = gene,  
+        column = "SYMBOL",
+        keytype = "SYMBOL",
+        multiVals = "first"
+      )
+    ) %>%
+    filter(!is.na(gene_symbol_mapped))
+  
+  # Remove duplicates (keep largest abs log2FC)
+  filtered_dge_mapped_df <- dge_mapped_df %>%
+    arrange(desc(abs(avg_log2FC))) %>%
+    distinct(gene_symbol_mapped, .keep_all = TRUE)
+  
+  # Create ranking metric
+  rank_metric <- -log10(filtered_dge_mapped_df$p_val) * sign(filtered_dge_mapped_df$avg_log2FC)
+  names(rank_metric) <- filtered_dge_mapped_df$gene_symbol_mapped
+  rank_metric <- sort(rank_metric, decreasing = TRUE)
+  
+  # Run GSEA
+  gsea_results <- GSEA(
+    geneList = rank_metric,
+    minGSSize = 25,
+    maxGSSize = 1000,
+    pvalueCutoff = 0.05,
+    eps = 0,
+    seed = TRUE,
+    pAdjustMethod = "fdr",
+    TERM2GENE = dplyr::select(mm_hallmark_sets, gs_name, gene_symbol)
+  )
+  
+  # Convert to data frame
+  gsea_result_df <- data.frame(gsea_results@result)
+  
+  # Write output CSV
+  out_file <- file.path(output_folder, paste0(base_name, "_GSEA_results.csv"))
+  write_csv(gsea_result_df, out_file)
+  
+  message("Processed: ", base_name)
+  
+  return(gsea_result_df)
+}
+
+# Run for all CSV files
+gsea_list <- map(csv_files, process_gsea)
+
+#--------Fig1C--Dotplot for GSEA Hallmark pathways 
+
+df <- read_csv("GSEA_Dotplot.csv")
+
+df$`Cell type` <- factor(df$`Cell type`, levels = unique(df$`Cell type`))
+
+desired_order <- c(
+  "HALLMARK_ALLOGRAFT_REJECTION",
+  "HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION",
+  "HALLMARK_INFLAMMATORY_RESPONSE",
+  "HALLMARK_INTERFERON_ALPHA_RESPONSE",
+  "HALLMARK_INTERFERON_GAMMA_RESPONSE",
+  "HALLMARK_MYC_TARGETS_V1",
+  "HALLMARK_MYOGENESIS",
+  "HALLMARK_OXIDATIVE_PHOSPHORYLATION",
+  "HALLMARK_P53_PATHWAY",
+  "HALLMARK_TNFA_SIGNALING_VIA_NFKB"
+)
+df$Pathway <- factor(df$Pathway, levels = desired_order)
+
+df <- df %>%
+  mutate(logP = -log10(p.adjust))
+
+ggplot(df, aes(
+  x = `Cell type`,
+  y = Pathway,
+  color = NES,
+  size = logP
+)) +
+  geom_point() +
+  scale_color_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0
+  ) +
+  scale_size(range = c(1, 8)) +  
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major = element_line(color = "grey85")
+  ) +
+  labs(
+    x = "Cell Type",
+    y = "Pathway",
+    color = "NES",
+    size = "-log10(adj. p)"
+  )
+
+ggsave (filename = "GSEA_Dotplot_Rectum.svg", device = "svg") 
+
+###############################################################################
+############# SPATIAL ANALYSIS ################################################
+
+CCRectum_obj <- readRDS("/Users/jkazmierski/CCRectum_obj.rds")
+CCRectum_C5_obj <- readRDS("/Users/jkazmierski/CCRectum_C5_obj.rds")
+
+### Fig3 --- Cell type annotations --- ###
+
+cluster_to_celltype <- c(
+  "Epithelial_0" = "Base Colonocyte",
+  "Epithelial_1" = "Colonocyte",
+  "Epithelial_2" = "TA",
+  "Epithelial_3" = "Goblet",
+  "Epithelial_4" = "REG4 Crypt",
+  "Epithelial_5" = "Colonocyte",
+  "Epithelial_6" = "BEST4+",
+  "Epithelial_7" = "Colonocyte/CD8",
+  "Epithelial_8" = "Colonocyte",
+  "Epithelial_9" = "Stem",
+  "Epithelial_10" = "Enteroendocrine",
+  "Epithelial_11" = "Enteroendocrine",
+  "Epithelial_12" = "Tuft",
+  "Epithelial_13" = "Inflammatory Crypt",
+  "Epithelial_14" = "Follicular B",
+  "Immune_0" = "Plasma",
+  "Immune_1" = "Myeloid",
+  "Immune_2" = "CD4 T",
+  "Immune_3" = "Follicular B",
+  "Immune_4" = "Prolif. Fibroblast",
+  "Immune_5" = "CD8 T",
+  "Immune_6" = "CD8/Colonocyte",
+  "Immune_7" = "Follicular T",
+  "Immune_8" = "GC B",
+  "Immune_9" = "Mast",
+  "Immune_10" = "IFN Myeloid",
+  "Immune_11" = "CD8 T IEC",
+  "Immune_12" = "Prolif. Myeloid",
+  "Stromal_0" = "Fibroblast",
+  "Stromal_1" = "Stromal/Myeloid",
+  "Stromal_2" = "Endothelial",
+  "Stromal_3" = "Fibroblast",
+  "Stromal_4" = "CCL19/21+ Fibroblast",
+  "Stromal_5" = "Fibroblast",
+  "Stromal_6" = "Fibroblast"
+)
+
+CCRectum_obj$celltype <- as.vector(
+  cluster_to_celltype[CCRectum_obj$subcluster]
+)
+CCRectum_obj$celltype <- factor(CCRectum_obj$celltype)
+levels(CCRectum_obj$celltype)
+
+# Verify the mapping
+table(CCRectum_obj$subcluster, CCRectum_obj$celltype) 
+
+#UMAP
+
+DimPlot(CCRectum_obj,  group.by = "celltype",  label = F,
+        pt.size = 2
+) + coord_fixed(ratio = 1.5)
+
+ggsave (filename = "k9clusterUMAP_Rectum.svg", device = "svg")
+
+
+###---Fig. 3G --- HIV+ vs HIV- follicle cytokine expression ---###
+
+agg <- AverageExpression(
+  CCRectum_C5_obj,
+  group.by = "ROI"
+)
+mat <- agg$RNA
+df <- as.data.frame(mat)
+df$gene <- rownames(df)
+
+write.csv(df, file = "CCRectum_Cytokineaggregate_expression.csv", 
+          row.names = FALSE)
+
+###--- Fig. 3 --- Tissue niche composition --- ###
+
+library(dplyr)
+
+prop_df <- CCRectum_obj@meta.data %>%
+  group_by(organ_patient_id, cluster_cellcharter_k9, celltype) %>%
+  summarise(n = n(), .groups = "drop")  
+
+prop_df <- prop_df %>%
+  group_by(organ_patient_id, cluster_cellcharter_k9) %>%
+  mutate(proportion = n / sum(n)) %>%
+  ungroup()
+
+prop_df %>%
+  group_by(organ_patient_id, cluster_cellcharter_k9) %>%
+  summarise(total = sum(proportion))
+
+prop_df <- prop_df %>%
+  left_join(
+    CCRectum_obj@meta.data %>% 
+      select(organ_patient_id, HIV_status) %>% 
+      distinct(),
+    by = "organ_patient_id"
+  )
+
+mean_prop_df <- prop_df %>%
+  group_by(HIV_status, cluster_cellcharter_k9, celltype) %>%
+  summarise(mean_proportion = mean(proportion), .groups = "drop")
+
+library(tidyr)
+
+mean_prop_wide <- mean_prop_df %>%
+  pivot_wider(
+    names_from = HIV_status,
+    values_from = mean_proportion
+  )
+
+mean_prop_wide <- mean_prop_wide %>%
+  mutate(ratio_HIVpos_over_HIVneg = hiv_pos / hiv_neg)
+
+write.csv(
+  mean_prop_wide,
+  file = "celltype_proportion_per_cluster_RECTUMHIV.csv",
+  row.names = TRUE
+)
+
+plot_df <- mean_prop_wide %>%
+  pivot_longer(
+    cols = c("hiv_pos", "hiv_neg"),
+    names_to = "hiv_status",
+    values_to = "mean_proportion"
+  ) %>%
+  mutate(
+    log2_ratio = log2(ratio_HIVpos_over_HIVneg)
+  )
+
+plot_df_filtered <- plot_df %>%
+  filter(mean_proportion >= 0.02)
+
+
+ggplot(plot_df_filtered, aes(
+  x = celltype,
+  y = cluster_cellcharter_k9,
+  size = mean_proportion,
+  color = log2_ratio
+)) +
+  geom_point() +
+  scale_color_gradient2(
+    low = "blue",
+    mid = "lightgrey",
+    high = "red",
+    midpoint = -0.5
+  ) +
+  scale_size(range = c(1, 10)) +
+  facet_wrap(~ hiv_status, ncol = 5) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major = element_line(color = "grey95")
+  ) +
+  labs(
+    x = "celltype",
+    y = "Cluster",
+    color = "log2(HIV+/HIV-)",
+    size = "Mean Proportion"
+  )
+
+ggsave (filename = "celltypeproportionpercelltype_Rectum.svg", device = "svg")
+
+### --- C2 stem cell niche subcluster analysis --- ###
+
+Idents(CCRectum_obj) <- CCRectum_obj$cluster_cellcharter_k9
+
+clusters_to_subcluster <- c("2")
+
+cells_to_keep <- WhichCells(CCRectum_obj, idents = clusters_to_subcluster)
+
+CCRectum_C2_obj <- subset(CCRectum_obj, cells = cells_to_keep)
+
+CCRectum_C2_obj <- SCTransform(CCRectum_C2_obj, assay = "RNA")
+CCRectum_C2_obj <- RunPCA(CCRectum_C2_obj, npcs = 15, features = rownames(CCRectum_C2_obj))
+CCRectum_C2_obj <- RunUMAP(CCRectum_C2_obj, dims = 1:15)
+CCRectum_C2_obj <- FindNeighbors(CCRectum_C2_obj, reduction = "pca", dims = 1:15)
+CCRectum_C2_obj <- FindClusters(CCRectum_C2_obj, resolution = 0.30)
+
+ElbowPlot(CCRectum_C2_obj, ndims = 20)
+
+DimPlot(CCRectum_C2_obj,  group.by = "seurat_clusters",  label = T, 
+        split.by = "HIV_status"
+) + coord_fixed(ratio = 1.5)
+
+cluster_markers <- FindAllMarkers(
+  CCRectum_C2_obj,
+  group.by = "seurat_clusters",
+  assay = "SCT",
+  slot = "data",
+  only.pos = TRUE,
+  min.pct = 0.1,
+  logfc.threshold = 0.1
+)
+
+write.csv(
+  cluster_markers,
+  "CCRectum_C2_obj_Celltype_marker.csv",
+  row.names = FALSE
+)
+#New cell type annotation for C2 
+cluster_to_celltype <- c(
+  "0" = "Base Colonocyte",
+  "1" = "Stem",
+  "2" = "TA",
+  "3" = "IFN TA",
+  "4" = "Goblet",
+  "5" = "CD8 T",
+  "6" = "Endocrine",
+  "7" = "BEST4+",
+  "8" = "Tuft"
+)
+
+CCRectum_C2_obj$celltype2 <- as.vector(
+  cluster_to_celltype[CCRectum_C2_obj$seurat_clusters]
+)
+CCRectum_C2_obj$celltype2 <- factor(CCRectum_C2_obj$celltype2)
+levels(CCRectum_C2_obj$celltype2)
+
+# Verify the mapping
+table(CCRectum_C2_obj$seurat_clusters, CCRectum_C2_obj$celltype2) 
+
+saveRDS(CCRectum_C2_obj, file = "CCRectum_C2_obj.rds")
+
+#UMAP
+DimPlot(CCRectum_C2_obj,  group.by = "celltype2",  label = T
+) + coord_fixed(ratio = 1.5)
+
+###--- Fig 3H --- CXCL expression dotplot --- ###
+DotPlot(object = CCRectum_obj, 
+        features = c("CXCL9", "CXCL10", "CXCL11"),
+        dot.scale = 8,
+        scale.max = 15,
+        group.by = "cluster_cellcharter_k9")  +  coord_flip() + RotatedAxis() +
+  scale_colour_gradient2(low = "blue", mid = "white", high = "red")
+
+ggsave (filename = "CXCR3L_Expressionlocalization_rectum.svg", device = "svg")
+
+###-------
+  
+Idents (CCRectum_obj) <- "cluster_cellcharter_k9"
+
+features <- c("CXCL9", "CXCL10", "CXCL11" )
+
+CCRectum_obj$new_split_group = paste0(CCRectum_obj$"cluster_cellcharter_k9", "_", CCRectum_obj$"HIV_status")
+
+DotPlot(object = CCRectum_obj, 
+        features = c("CXCL9", "CXCL10", "CXCL11"), 
+        dot.scale = 8,
+        scale.max = 15,
+        group.by = "new_split_group")  +  coord_flip() + RotatedAxis() +
+  scale_colour_gradient2(low = "blue", mid = "white", high = "red")
+
+
+
+FeaturePlot(CCRectum_obj, features = c("CXCL9", "CXCL10"), 
+            pt.size = 4,
+            blend = TRUE)
+
+FeatureScatter(CCRectum_obj, feature1 = "CXCR3", feature2 = "ITGAE", pt.size = 8,)
