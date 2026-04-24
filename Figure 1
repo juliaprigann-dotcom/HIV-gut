@@ -1,1 +1,525 @@
+#####Figure 1 Script ######
 
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+
+scRNA_Ileum <- readRDS("/Users/jkazmierski/ileum_annotated.rds")
+scRNA_Ileum <- FindClusters(scRNA_Ileum, resolution = 0.60)
+
+saveRDS(object = scRNA_Ileum, file = "scRNA_Ileum.rds")
+
+#------------Celltype annotations for Cluster Resolution 0.6-------------------
+cluster_to_celltype <- c(
+  "T cell",      # 0
+  "B cell",      # 1
+  "Crypt cell",      # 2
+  "Enterocyte",     # 3
+  "Enterocyte",      # 4
+  "Enterocyte",     # 5
+  "Myeloid",      # 6
+  "T cell",      # 7
+  "B cell",      # 8
+  "Goblet",  # 9
+  "Fibroblast",      # 10
+  "Crypt cell",      # 11
+  "Fibroblast",     # 12
+  "Prolif B cell",  # 13
+  "Enterocyte",      # 14
+  "Fibroblast",      # 15
+  "Endothelial",     # 16
+  "Plasma",      # 17
+  "Plasma",  # 18
+  "Plasma",    # 19
+  "Plasma",    # 20
+  "Mast",      # 21
+  "Endocrine",      # 22
+  "Paneth",      # 23
+  "Plasma",     # 24
+  "T cell"      # 25 
+)
+
+# Map clusters to cell types and save as new metadata column
+scRNA_Ileum$celltype <- cluster_to_celltype[scRNA_Ileum$seurat_clusters]
+
+# Verify the mapping
+table(scRNA_Ileum$seurat_clusters, scRNA_Ileum$celltype) 
+
+#---------------_Colors for cell clusters and cell types----------------------
+subcluster_cols <- c(
+
+  "B cell"  = "#622E91",  #
+  "Crypt cell"  = "#00B0AC",  
+  "Endocrine"  = "#041969",  
+  "Endothelial"  = "#FF7C00",  
+  "Enterocyte"  = "#A6CE39",  
+  "Fibroblast"  = "#FFD700",  
+  "Goblet"  = "#0084C9",  
+  "Mast"  = "#F48781",  
+  "Myeloid"  = "#FF010B",  
+  "Paneth"  = "#318E48",
+  "Plasma" = "#5562AD",  
+  "Prolif B cell" = "#BCAED5", 
+  "T cell" = "#B20093")  
+
+k9_colors <- c(
+  "0" = "#eaf208",
+  "1" = "#f64040",
+  "2" = "#00b210",
+  "3" = "#0ad8e3",
+  "4" = "#a177ff",
+  "5" = "#f8b004",
+  "6" = "#458bff",
+  "7" = "#21efa5",
+  "8" = "#ff8ad7"
+)
+
+#------------UMAP celltypes and HIV status ------------------------------------
+DimPlot(scRNA_Ileum,  group.by = "celltype", 
+        cols = subcluster_cols, pt.size = 0.5, label = TRUE) + coord_fixed()
+
+ggsave (filename = "Ileum_scRNA_obj_UMAP_celltype.svg", device = "svg")
+
+DimPlot(scRNA_Ileum,  group.by = "orig.ident", pt.size = 0.1,
+        split.by = "hiv_status"
+        ) + coord_fixed()
+
+ggsave (filename = "Ileum_scRNA_obj_HIVstatus_split.svg", device = "svg")
+
+#------------Fig1B-----Cell type proportion for each sample ----------------#
+
+library(dplyr)
+
+df_sample <- scRNA_Ileum@meta.data %>%
+  group_by(orig.ident, celltype) %>%  
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(orig.ident) %>%           
+  mutate(freq = n / sum(n))    
+
+write.csv(df_sample, file = "Ileum_Celltypeproportion_per_sample.csv", row.names = FALSE)
+
+#--Fig1B--Propeller cell type differences between conditions analysis ------
+
+library(speckle)
+library(limma)
+library(edgeR)
+library(pheatmap)
+library(gt)
+prop_res <- propeller(clusters=Ileum_scRNA_obj$celltype, 
+                      sample=Ileum_scRNA_obj$orig.ident, 
+                      group=Ileum_scRNA_obj$hiv_status, transform="asin")
+
+write.csv(
+  prop_res,
+  file = "Propeller_Ileum_scRNA_celltype.csv",
+  row.names = TRUE
+)
+
+#--------Fig1C-Pseudobulk DEG and GSEA Hallmark Geneset analysis-------------
+#Pseudbulk
+Pseudo_Ileum_scRNA_obj <- AggregateExpression(Ileum_scRNA_obj, assays = "RNA", 
+                                                  return.seurat = T, 
+                                       group.by = c("hiv_status", "celltype", "orig.ident"))
+
+tail(Cells(Ileum_scRNA_obj))
+
+Pseudo_Ileum_scRNA_obj$celltype.hiv <- paste(Pseudo_Ileum_scRNA_obj$hiv_status, Pseudo_Ileum_scRNA_obj$celltype, sep = "_")
+
+Idents(Pseudo_Ileum_scRNA_obj) <- "celltype.hiv"
+
+cell.type.ordered <- unique(Pseudo_Ileum_scRNA_obj$celltype)
+cell.type.ordered
+
+# Initialize an empty list to store results
+markers_list_mid <- list()
+
+# Create folder if it does not exist
+if(!dir.exists("DE_results")){
+  dir.create("DE_results")
+}
+
+# Loop through each mid cell type
+for (ct in cell.type.ordered) {
+  
+  ident1 <- paste0("hiv+_", ct)
+  ident2 <- paste0("hiv-_", ct)
+  
+  cells1 <- WhichCells(Pseudo_Ileum_scRNA_obj, idents = ident1)
+  cells2 <- WhichCells(Pseudo_Ileum_scRNA_obj, idents = ident2)
+  
+  if(length(cells1) < 3 | length(cells2) < 3){
+    message("Skipping ", ct, " because one group has fewer than 3 cells.")
+    next
+  }
+  
+  markers <- FindMarkers(
+    object = Pseudo_Ileum_scRNA_obj,
+    ident.1 = ident1,
+    ident.2 = ident2,
+    test.use = "DESeq2"
+  )
+  
+  markers$gene <- rownames(markers)
+  markers_list_mid[[ct]] <- markers
+  
+  file_name <- paste0("DE_results/DE_HIV_", ct, ".csv")
+  write.csv(markers, file = file_name, row.names = FALSE)
+  message("Saved DE results for ", ct, " to ", file_name)
+}
+
+#GSEA for hallmarkpathways
+
+library(readr)
+library(dplyr)
+library(tibble)
+library(org.Hs.eg.db)
+library(clusterProfiler)
+library(msigdbr)
+library(purrr)
+
+# Folder containing CSV files
+input_folder <- "/Users/jkazmierski/DE_results"
+output_folder <- "/Users/jkazmierski/GSEA_results"
+
+# Make sure output folder exists
+if (!dir.exists(output_folder)) dir.create(output_folder)
+
+# Load Hallmark gene sets
+mm_hallmark_sets <- msigdbr(
+  species = "Homo sapiens",
+  category = "H"
+)
+
+# List all CSV files in the folder
+csv_files <- list.files(input_folder, pattern = "\\.csv$", full.names = TRUE)
+
+# Function to process a single CSV
+process_gsea <- function(file_path) {
+  # Extract a base name for output
+  base_name <- tools::file_path_sans_ext(basename(file_path))
+  
+  # Read CSV
+  dge_df <- read_csv(file_path)
+  
+  # Map gene symbols
+  dge_mapped_df <- dge_df %>%
+    mutate(
+      gene_symbol_mapped = mapIds(
+        org.Hs.eg.db,
+        keys = gene,  
+        column = "SYMBOL",
+        keytype = "SYMBOL",
+        multiVals = "first"
+      )
+    ) %>%
+    filter(!is.na(gene_symbol_mapped))
+  
+  # Remove duplicates (keep largest abs log2FC)
+  filtered_dge_mapped_df <- dge_mapped_df %>%
+    arrange(desc(abs(avg_log2FC))) %>%
+    distinct(gene_symbol_mapped, .keep_all = TRUE)
+  
+  # Create ranking metric
+  rank_metric <- -log10(filtered_dge_mapped_df$p_val) * sign(filtered_dge_mapped_df$avg_log2FC)
+  names(rank_metric) <- filtered_dge_mapped_df$gene_symbol_mapped
+  rank_metric <- sort(rank_metric, decreasing = TRUE)
+  
+  # Run GSEA
+  gsea_results <- GSEA(
+    geneList = rank_metric,
+    minGSSize = 25,
+    maxGSSize = 1000,
+    pvalueCutoff = 0.05,
+    eps = 0,
+    seed = TRUE,
+    pAdjustMethod = "fdr",
+    TERM2GENE = dplyr::select(mm_hallmark_sets, gs_name, gene_symbol)
+  )
+  
+  # Convert to data frame
+  gsea_result_df <- data.frame(gsea_results@result)
+  
+  # Write output CSV
+  out_file <- file.path(output_folder, paste0(base_name, "_GSEA_results.csv"))
+  write_csv(gsea_result_df, out_file)
+  
+  message("Processed: ", base_name)
+  
+  return(gsea_result_df)
+}
+
+# Run for all CSV files
+gsea_list <- map(csv_files, process_gsea)
+
+#--------Fig1C--Dotplot for GSEA Hallmark pathways 
+
+df <- read_csv("GSEA_Dotplot.csv")
+
+df$`Cell type` <- factor(df$`Cell type`, levels = unique(df$`Cell type`))
+
+desired_order <- c(
+  "HALLMARK_ALLOGRAFT_REJECTION",
+  "HALLMARK_COMPLEMENT",
+  "HALLMARK_E2F_TARGETS",
+  "HALLMARK_G2M_CHECKPOINT",
+  "HALLMARK_IL2_STAT5_SIGNALING",
+  "HALLMARK_INFLAMMATORY_RESPONSE",
+  "HALLMARK_INTERFERON_ALPHA_RESPONSE",
+  "HALLMARK_INTERFERON_GAMMA_RESPONSE",
+  "HALLMARK_MYC_TARGETS_V1",
+  "HALLMARK_TNFA_SIGNALING_VIA_NFKB"
+)
+df$Pathway <- factor(df$Pathway, levels = desired_order)
+
+df <- df %>%
+  mutate(logP = -log10(p.adjust))
+
+ggplot(df, aes(
+  x = `Cell type`,
+  y = Pathway,
+  color = NES,
+  size = logP
+)) +
+  geom_point() +
+  scale_color_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "red",
+    midpoint = 0
+  ) +
+  scale_size(range = c(1, 10)) +  
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major = element_line(color = "grey85")
+  ) +
+  labs(
+    x = "Cell Type",
+    y = "Pathway",
+    color = "NES",
+    size = "-log10(adj. p)"
+  )
+
+
+###############################################################################
+########################## --- SPATIAL ANALYSIS --- ########################### 
+
+#--- Load Object --- # 
+CCIleum_obj <- readRDS("/Users/jkazmierski/CCIleum_obj.rds")
+
+#--------Fig1D-Celltype annotations---------------------------------------
+
+cluster_to_celltype <- c(
+  "CD8_Epithelial cell" = "CD8 Epithelial",
+  "CD8_Epithelial cell_2" = "CD8 Epithelial",
+  "Fibroblasts" = "Fibroblast",
+  "niche_supporting fibroblasts" = "Fibroblast",
+  "Myofibroblast" = "Fibroblast",
+  "Enterocytes_1" = "Enterocyte",
+  "Enterocytes_2" = "Enterocyte",
+  "Enterocytes_3" = "Enterocyte",
+  "Enterocytes_4" = "Enterocyte",
+  "Goblet cells" = "Goblet",
+  "Goblet cells_2" = "Goblet",
+  "Inflammatory Macrophages" = "IFN Myeloid",
+  "Inflammatory Macrophages_2" = "IFN Myeloid",
+  "DC_Macrophages" = "Myeloid",
+  "Mast cell" = "Mast",
+  "CD4 T-cells" = "CD4 T",
+  "Cytotoxic CD8 T cells" = "CD8 T",
+  "Intraepithelial CD8 T" = "Intraepithelial CD8",
+  "Intraepithelial CD8 T_2" = "Intraepithelial CD8",
+  "IFN_exposed_CD8Trms" = "IFN Intraepithelial CD8",
+  "IFN_exposed_enterocytes" = "IFN Enterocyte",
+  "Crypt stem cells" = "Stem",
+  "CD8_Stem cell" = "CD8 Stem",
+  "Transit-amplifying progenitor cells" = "Primed progenitors",
+  "Plastic progenitors cells" = "Cycling progenitors",
+  "Enteroendocrine cells" = "Endocrine",
+  "L cells" = "Endocrine",
+  "Endothelial cells" = "Endothelial",
+  "Lymphatic endothelial cells" = "Endothelial",
+  "Plasma cells" = "Plasma",
+  "Follicular B cell" = "B Follicular ",
+  "Follicular Lymphocytes" = "T Follicular",
+  "Mixed Immune population" = "Immune mix",
+  "Immune cell/Stromal cell mix" = "Epithelial Stromal",
+  "CCL19/CCL21+ lymphoid cells" = "CCL19/CCL21+ lymphocytes",
+  "BEST4+ epithelial cells" = "BEST4+",
+  "Tuft cells" = "Tuft"
+)
+
+CCIleum_obj$celltype <- as.vector(
+  cluster_to_celltype[CCIleum_obj$subcluster_identity]
+)
+CCIleum_obj$celltype <- factor(CCIleum_obj$celltype)
+levels(CCIleum_obj$celltype)
+
+# Verify the mapping
+table(CCIleum_obj$subcluster_identity, CCIleum_obj$celltype) 
+
+#UMAP
+
+DimPlot(CCIleum_obj,  group.by = "celltype",  label = F, 
+        split.by = "hiv_status"
+) + coord_fixed(ratio = 1.5)
+
+ggsave (filename = "UMAP_CCIleum_celltype_SplitHIV.svg", device = "svg")
+
+#-----------Fig1E--Propeller celltype and tissue niche proportions--------
+
+library(speckle)
+library(limma)
+library(edgeR)
+library(pheatmap)
+library(gt)
+prop_celltype <- propeller(clusters=CCIleum_obj$celltype, 
+                      sample=CCIleum_obj$organ_patient_id, 
+                      group=CCIleum_obj$hiv_status, transform="asin")
+
+prop_tissueniche <- propeller(clusters=CCIleum_obj$cluster_cellcharter_k9, 
+                           sample=CCIleum_obj$organ_patient_id, 
+                           group=CCIleum_obj$hiv_status, transform="asin")
+
+write.csv(
+  prop_celltype,
+  file = "Propeller_Ileum_spatial_celltypes.csv",
+  row.names = TRUE
+)
+
+#-----------Fig1F--Tissue niche cell type compositions --------------
+
+library(dplyr)
+
+prop_df <- CCIleum_obj@meta.data %>%
+  group_by(organ_patient_id, cluster_cellcharter_k9, celltype) %>%
+  summarise(n = n(), .groups = "drop")  
+
+prop_df <- prop_df %>%
+  group_by(organ_patient_id, cluster_cellcharter_k9) %>%
+  mutate(proportion = n / sum(n)) %>%
+  ungroup()
+
+prop_df %>%
+  group_by(organ_patient_id, cluster_cellcharter_k9) %>%
+  summarise(total = sum(proportion))
+
+prop_df <- prop_df %>%
+  left_join(
+    CCIleum_obj@meta.data %>% 
+      select(organ_patient_id, hiv_status) %>% 
+      distinct(),
+    by = "organ_patient_id"
+  )
+
+mean_prop_df <- prop_df %>%
+  group_by(hiv_status, cluster_cellcharter_k9, celltype) %>%
+  summarise(mean_proportion = mean(proportion), .groups = "drop")
+
+library(tidyr)
+
+mean_prop_wide <- mean_prop_df %>%
+  pivot_wider(
+    names_from = hiv_status,
+    values_from = mean_proportion
+  )
+
+mean_prop_wide <- mean_prop_wide %>%
+  mutate(ratio_HIVpos_over_HIVneg = `HIV+` / `HIV-`)
+
+write.csv(
+  mean_prop_wide,
+  file = "celltype_proportion_per_cluster_HIV.csv",
+  row.names = TRUE
+)
+
+plot_df <- mean_prop_wide %>%
+  pivot_longer(
+    cols = c("HIV+", "HIV-"),
+    names_to = "hiv_status",
+    values_to = "mean_proportion"
+  ) %>%
+  mutate(
+    log2_ratio = log2(ratio_HIVpos_over_HIVneg)
+  )
+
+plot_df_filtered <- plot_df %>%
+  filter(mean_proportion >= 0.02)
+
+
+ggplot(plot_df_filtered, aes(
+  x = celltype,
+  y = cluster_cellcharter_k9,
+  size = mean_proportion,
+  color = log2_ratio
+)) +
+  geom_point() +
+  scale_color_gradient2(
+    low = "blue",
+    mid = "lightgrey",
+    high = "red",
+    midpoint = 0
+  ) +
+  scale_size(range = c(1, 10)) +
+  facet_wrap(~ hiv_status, ncol = 2) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.major = element_line(color = "grey95")
+  ) +
+  labs(
+    x = "Cell Type",
+    y = "Cluster",
+    color = "log2(HIV+/HIV-)",
+    size = "Mean Proportion"
+  )
+
+ggsave (filename = "celltypeproportionpercluster_Ileum.svg", device = "svg")
+
+### ---Fig 1G -- CD8 to CD3 transcript ratio per sample in tissue niches --- #
+agg <- AverageExpression(
+  CCIleum_obj,
+  features = c("CD8A", "CD3E", "CD8B", "CD3G", "CD3D"),
+  group.by = c("cluster_cellcharter_k9", "hiv_status", "organ_patient_id")
+)
+
+# Extract RNA assay matrix
+mat <- agg$RNA
+
+# Convert to data frame
+df <- as.data.frame(mat)
+
+# Add gene names as a column
+df$gene <- rownames(df)
+
+# Write to CSV
+write.csv(df, file = "aggregate_expression.csv", row.names = FALSE)
+
+### Fig 1H --- CD8A/B transcript abundance violin plot
+Idents (CCIleum_obj) <- "celltype"
+
+VlnPlot(CCIleum_obj, features = c("CD8B", "CD8A"), 
+        split.by = "hiv_status",
+        idents = c( "T Follicular"), pt.size = 0)
+
+ggsave (filename = "Violin_CD8_FollicularT.svg", device = "svg")
+
+###Statistical testing 
+
+# Subset to T Follicular cells
+sub_obj <- subset(CCIleum_obj, idents = "T Follicular")
+
+# Fetch expression + metadata
+df <- FetchData(sub_obj, vars = c("CD8B", "CD8A", "hiv_status"))
+wilcox.test(CD8B ~ hiv_status, data = df)
+wilcox.test(CD8A ~ hiv_status, data = df)
+
+### --- Fig1I In depth Follicular T/B cell type CD8 increase --- ###
+
+df <- CCIleum_C5_obj@meta.data %>%
+  group_by(organ_patient_id, celltype, celltype2) %>%
+  summarise(count = n(), .groups = "drop")
+
+head(df)
+
+write.csv(df, "CCIleum_celltype_counts_by_patient.csv", row.names = FALSE)
