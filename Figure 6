@@ -1,0 +1,323 @@
+### T cell subcluster analysis ###
+
+CCRectum_obj <- readRDS("/Users/jkazmierski/CCRectum_obj.rds")
+
+### C5 subcluster analysis ###
+Idents(CCRectum_obj) <- CCRectum_obj$cluster_cellcharter_k9
+
+clusters_to_subcluster <- c("5")
+
+cells_to_keep <- WhichCells(CCRectum_obj, idents = clusters_to_subcluster)
+
+CCRectum_C5_obj <- subset(CCRectum_obj, cells = cells_to_keep)
+
+CCRectum_C5_obj <- SCTransform(CCRectum_C5_obj, assay = "RNA")
+CCRectum_C5_obj <- RunPCA(CCRectum_C5_obj, npcs = 20, features = rownames(CCRectum_C5_obj))
+CCRectum_C5_obj <- RunUMAP(CCRectum_C5_obj, dims = 1:20)
+CCRectum_C5_obj <- FindNeighbors(CCRectum_C5_obj, reduction = "pca", dims = 1:20)
+CCRectum_C5_obj <- FindClusters(CCRectum_C5_obj, resolution = 0.750)
+
+ElbowPlot(CCRectum_Tcells_obj, ndims = 15)
+
+DimPlot(CCRectum_C5_obj,  group.by = "seurat_clusters",  label = T
+) + coord_fixed(ratio = 1.5)
+
+cluster_markers <- FindAllMarkers(
+  CCRectum_C5_obj,
+  group.by = "seurat_clusters",
+  assay = "SCT",
+  slot = "data",
+  only.pos = TRUE,
+  min.pct = 0.1,
+  logfc.threshold = 0.1
+)
+
+### C5 T cell subcluster analysis ###
+
+Idents(CCRectum_C5_obj) <- CCRectum_C5_obj$seurat_clusters
+
+clusters_to_subcluster <- c("1", "4", "5",  "8")
+
+cells_to_keep <- WhichCells(CCRectum_C5_obj, idents = clusters_to_subcluster)
+
+CCRectum_C5_Tcells_obj <- subset(CCRectum_C5_obj, cells = cells_to_keep)
+
+CCRectum_C5_Tcells_obj <- SCTransform(CCRectum_C5_Tcells_obj, assay = "RNA")
+CCRectum_C5_Tcells_obj <- RunPCA(CCRectum_C5_Tcells_obj, npcs = 15, features = rownames(CCRectum_C5_Tcells_obj))
+CCRectum_C5_Tcells_obj <- RunUMAP(CCRectum_C5_Tcells_obj, dims = 1:15)
+CCRectum_C5_Tcells_obj <- FindNeighbors(CCRectum_C5_Tcells_obj, reduction = "pca", dims = 1:15)
+CCRectum_C5_Tcells_obj <- FindClusters(CCRectum_C5_Tcells_obj, resolution = 0.50)
+
+ElbowPlot(CCRectum_C5_Tcells_obj, ndims = 20)
+
+DimPlot(CCRectum_C5_Tcells_obj,  group.by = "seurat_clusters",  label = T
+) + coord_fixed(ratio = 1.5)
+
+ggsave(filename = "umap_C5_Tcellsub.svg", device = "svg")
+
+cluster_markers_Tcells <- FindAllMarkers(
+  CCRectum_C5_Tcells_obj,
+  group.by = "seurat_clusters",
+  assay = "SCT",
+  slot = "data",
+  only.pos = TRUE,
+  min.pct = 0.1,
+  logfc.threshold = 0.1
+)
+
+cluster_to_celltype <- c(
+  "CD4 T",      # 0
+  "CXCR4 T",      # 1
+  "CD8 T",      # 2
+  "CD4 follicular T",     # 3
+  "CD4 T",      # 4
+  "Myeloid",     # 5
+  "CD4 T Ex",      # 6
+  "CD8 T Ex",      # 7
+  "CD4 T"      # 8
+)
+
+# Map clusters to cell types and save as new metadata column
+CCRectum_C5_Tcells_obj$Tcelltype <- cluster_to_celltype[CCRectum_C5_Tcells_obj$seurat_clusters]
+
+# Verify the mapping
+table(CCRectum_C5_Tcells_obj$seurat_clusters, CCRectum_C5_Tcells_obj$Tcelltype) 
+
+DimPlot(CCRectum_C5_Tcells_obj,  group.by = "Tcelltype",  label = F
+) + coord_fixed(ratio = 1.5)
+
+ggsave(filename = "umap_C5_Tcellannotation.svg", device = "svg")
+
+DimPlot(CCRectum_C5_Tcells_obj,   
+        group.by = "HIV_status" ,label = F
+) + coord_fixed(ratio = 1.5)
+
+ggsave(filename = "umap_C5_T_HIV.svg", device = "svg")
+
+DimPlot(CCRectum_C5_Tcells_obj,  group.by = "TLSstage",  label = F
+) + coord_fixed(ratio = 1.5)
+
+ggsave(filename = "umap_C5_Tcells_TLSstage.svg", device = "svg")
+
+DotPlot(object = CCRectum_C5_Tcells_obj, 
+        group.by = "Tcelltype",
+        features = c("CD4", "CD3E", "CD8A", "CD8B",  
+                     "CCR7", "IL7R", "TRAC", "RORA", "SELL",
+                     "PDCD1", "TIGIT", "HAVCR2", "CTLA4", "LAG3",
+                     "CXCR5", "CXCR4", "CXCR3" 
+                     ), 
+        idents = c("CD8 T", "CD8 T Ex"), 
+        dot.scale = 10,
+        scale.max = 100) +  coord_flip() 
+
+VlnPlot (object = CCRectum_C5_Tcells_obj, feature = "PDCD1", group.by = "Tcelltype",
+         idents = c("CD8 T", "CD8 T Ex"), pt.size = 0 )
+ggsave(filename = "Vln_PDCD1.svg", device = "svg")
+
+
+VlnPlot (object = CCRectum_C5_Tcells_obj, feature = "IL7R", group.by = "Tcelltype",
+         idents = c("CD8 T", "CD8 T Ex"), pt.size = 0 )
+ggsave(filename = "Vln_IL7R.svg", device = "svg")
+
+VlnPlot (object = CCRectum_C5_Tcells_obj, feature = "HAVCR2", group.by = "Tcelltype",
+         idents = c("CD8 T", "CD8 T Ex"), pt.size = 0 ) 
+ggsave(filename = "Vln_HAVCR2.svg", device = "svg")
+
+VlnPlot (object = CCRectum_C5_Tcells_obj, feature = "LAG3", group.by = "Tcelltype",
+         idents = c("CD8 T", "CD8 T Ex"), pt.size = 0 )
+ggsave(filename = "Vln_LAG3.svg", device = "svg")
+
+ggsave(filename = "Dotplot_Tcellsub_C5.svg", device = "svg")
+
+###Statustical testing vln plots 
+# Subset to T Follicular cells
+comparison <- FindMarkers(CCRectum_C5_Tcells_obj, 
+                          ident.1 = "CD8 T", 
+                          ident.2 = "CD8 T Ex", 
+                          features = c("IL7R", "HAVCR2", "LAG3", "PDCD1"),
+                          test.use = "wilcox")
+
+###Fraction of CD8T and CD8T Ex in each TLSstage
+# 1. Create the cross-tabulation table
+# Rows = Cell Types (CD8 T, CD8 T Ex), Columns = TLS Stages
+dist_table <- table(sub_obj$Tcelltype, sub_obj$TLSstage)
+
+# 2. Calculate proportions by Row (margin = 1)
+# This makes each Cell Type row sum to 1 (100%)
+cell_distribution <- prop.table(dist_table, margin = 1)
+
+# 3. Convert to a clean data frame
+dist_df <- as.data.frame(cell_distribution)
+colnames(dist_df) <- c("Tcelltype", "TLSstage", "Proportion")
+
+# 4. View the result
+print(dist_df)
+
+######Dotplots
+
+Idents (CCRectum_C5_Tcells_obj) <- "Tcelltype"
+
+CCRectum_C5_Tcells_obj$new_split_group = 
+  paste0(CCRectum_C5_Tcells_obj$"Tcelltype", "_", 
+         CCRectum_C5_Tcells_obj$"TLSstage")
+
+DotPlot(object = CCRectum_C5_Tcells_obj, 
+        features = c("CD4", "CD3E", "CD8A", "CD8B",  
+                     "CCR7", "IL7R", "TRAC", "RORA", "SELL",
+                     "PDCD1", "TIGIT", "HAVCR2", "CTLA4", "LAG3",
+                     "CXCR5", "CXCR4", "CXCR3" ), 
+        idents = c("CD8 T", "CD8 T Ex"), 
+        dot.scale = 7,
+        scale.max = 100,
+        group.by = "new_split_group")  +  coord_flip() + RotatedAxis() 
+
+
+
+####TLS region assignment
+
+HIV_1 <- read.csv("HIV_1.csv", stringsAsFactors = FALSE) #TLS1_Tcell
+HIV_2 <- read.csv("HIV_2.csv", stringsAsFactors = FALSE) #TLS1_Bcell
+HIV_3 <- read.csv("HIV_3.csv", stringsAsFactors = FALSE) #TLS2_immature
+HIV_4 <- read.csv("HIV_4.csv", stringsAsFactors = FALSE) #TLS3_Bcell
+HIV_5 <- read.csv("HIV_5.csv", stringsAsFactors = FALSE) #TLS4_immature
+HIV_6 <- read.csv("HIV_6.csv", stringsAsFactors = FALSE) #TLS5_immature
+HIV_7 <- read.csv("HIV_7.csv", stringsAsFactors = FALSE) #TLS6_immature
+HIV_8 <- read.csv("HIV_8.csv", stringsAsFactors = FALSE) #TLS7_Bcell
+HIV_9 <- read.csv("HIV_9.csv", stringsAsFactors = FALSE) #TLS7_Tcell
+HIV_10 <- read.csv("HIV_10.csv", stringsAsFactors = FALSE) #TLS8_Bcell
+HIV_11 <- read.csv("HIV_11.csv", stringsAsFactors = FALSE) #TLS8_Tcell
+Ctrl_1 <- read.csv("Ctrl_1.csv", stringsAsFactors = FALSE) #Ctrl1_Immature
+Ctrl_2 <- read.csv("Ctrl_2.csv", stringsAsFactors = FALSE) #Ctrl2_Immature
+Ctrl_3 <- read.csv("Ctrl_3.csv", stringsAsFactors = FALSE) #Ctrl3_Immature
+Ctrl_4 <- read.csv("Ctrl_4.csv", stringsAsFactors = FALSE) #Ctrl4_Immature
+
+# 1. Create a unique key in your Seurat object 
+# (Assuming your object has a column named 'organ_patient_id' or 'sample' for the sample names)
+CCRectum_C5_obj$unique_key <- paste0(CCRectum_C5_obj$cell_id, "_", CCRectum_C5_obj$organ_patient_id)
+
+# 2. Create the same unique key in your CSVs
+# Replace "Sample_Name_1" with the actual name that matches CCRectum_obj$organ_patient_id
+HIV_1$unique_key <- paste0(HIV_1$cell_id, "_", "R_7450")
+HIV_2$unique_key <- paste0(HIV_2$cell_id, "_", "R_7450")
+HIV_3$unique_key <- paste0(HIV_3$cell_id, "_", "R_7450")
+HIV_4$unique_key <- paste0(HIV_4$cell_id, "_", "R_7450")
+HIV_5$unique_key <- paste0(HIV_5$cell_id, "_", "R_7450")
+HIV_6$unique_key <- paste0(HIV_6$cell_id, "_", "R_7450")
+HIV_7$unique_key <- paste0(HIV_7$cell_id, "_", "R_7450")
+HIV_8$unique_key <- paste0(HIV_8$cell_id, "_", "R_7458")
+HIV_9$unique_key <- paste0(HIV_9$cell_id, "_", "R_7458")
+HIV_10$unique_key <- paste0(HIV_10$cell_id, "_", "R_7458")
+HIV_11$unique_key <- paste0(HIV_11$cell_id, "_", "R_7458")
+Ctrl_1$unique_key <- paste0(Ctrl_1$cell_id, "_", "R_7413")
+Ctrl_2$unique_key <- paste0(Ctrl_2$cell_id, "_", "R_7413")
+Ctrl_3$unique_key <- paste0(Ctrl_3$cell_id, "_", "R_7413")
+Ctrl_4$unique_key <- paste0(Ctrl_4$cell_id, "_", "R_7413")
+
+# 3. Initialize the metadata column
+CCRectum_C5_obj$TLS <- "None"
+
+# 4. Match using the UNIQUE KEYS instead of just barcodes
+CCRectum_C5_obj$TLS[
+  match(HIV_1$unique_key, CCRectum_C5_obj$unique_key)
+] <- "Group_1"
+
+CCRectum_C5_obj$TLS[
+  match(HIV_2$unique_key, CCRectum_C5_obj$unique_key)
+] <- "Group_2"
+
+CCRectum_C5_obj$TLS[
+  match(HIV_3$unique_key, CCRectum_C5_obj$unique_key)
+] <- "Group_3"
+
+CCRectum_C5_obj$TLS[
+  match(HIV_4$unique_key, CCRectum_C5_obj$unique_key)
+] <- "Group_4"
+
+CCRectum_C5_obj$TLS[
+  match(HIV_5$unique_key, CCRectum_C5_obj$unique_key)
+] <- "Group_5"
+
+CCRectum_C5_obj$TLS[
+  match(HIV_6$unique_key, CCRectum_C5_obj$unique_key)
+] <- "Group_6"
+
+CCRectum_C5_obj$TLS[
+  match(HIV_7$unique_key, CCRectum_C5_obj$unique_key)
+] <- "Group_7"
+
+CCRectum_C5_obj$TLS[
+  match(HIV_8$unique_key, CCRectum_C5_obj$unique_key)
+] <- "Group_8"
+
+CCRectum_C5_obj$TLS[
+  match(HIV_9$unique_key, CCRectum_C5_obj$unique_key)
+] <- "Group_9"
+
+CCRectum_C5_obj$TLS[
+  match(HIV_10$unique_key, CCRectum_C5_obj$unique_key)
+] <- "Group_10"
+
+CCRectum_C5_obj$TLS[
+  match(HIV_11$unique_key, CCRectum_C5_obj$unique_key)
+] <- "Group_11"
+
+CCRectum_C5_obj$TLS[
+  match(Ctrl_1$unique_key, CCRectum_C5_obj$unique_key)
+] <- "Group_12"
+
+CCRectum_C5_obj$TLS[
+  match(Ctrl_2$unique_key, CCRectum_C5_obj$unique_key)
+] <- "Group_13"
+
+CCRectum_C5_obj$TLS[
+  match(Ctrl_3$unique_key, CCRectum_C5_obj$unique_key)
+] <- "Group_14"
+
+CCRectum_C5_obj$TLS[
+  match(Ctrl_4$unique_key, CCRectum_C5_obj$unique_key)
+] <- "Group_15"
+
+# 5. Check your work
+table(CCRectum_C5_obj$TLS, CCRectum_C5_obj$organ_patient_id)
+
+DimPlot(CCRectum_C5_obj,  group.by = "TLS",  label = F, order = T
+) + coord_fixed(ratio = 1.5)
+
+#Combine based on TLS stage 
+
+group_to_TLS <- c(
+  "Group_1" = "T cell zone",
+  "Group_2" = "B cell zone",
+  "Group_3" = "Immature",
+  "Group_4" = "B cell zone",
+  "Group_5" = "Immature",
+  "Group_6" = "Immature",
+  "Group_7" = "Immature",
+  "Group_8" = "B cell zone",
+  "Group_9" = "T cell zone",
+  "Group_10" = "B cell zone",
+  "Group_11" = "T cell zone",
+  "Group_12" = "Immature",
+  "Group_13" = "Immature",
+  "Group_14" = "Immature",
+  "Group_15" = "Immature"
+)
+
+CCRectum_C5_obj$TLSstage <- as.vector(
+  group_to_TLS[CCRectum_C5_obj$TLS]
+)
+CCRectum_C5_obj$TLSstage <- factor(CCRectum_C5_obj$TLSstage)
+levels(CCRectum_C5_obj$TLSstage)
+
+# Verify the mapping
+table(CCRectum_C5_obj$TLSstage, CCRectum_C5_obj$TLS) 
+
+DimPlot(CCRectum_C5_obj,  group.by = "TLSstage",  label = F, order = T
+) + coord_fixed(ratio = 1.5)
+
+ggsave (filename = "UMAP_C5sub_TLSstage.svg", device = "svg")
+
+DimPlot(CCRectum_C5_obj,  group.by = "HIV_status",  label = F, order = T
+) + coord_fixed(ratio = 1.5)
+
+ggsave (filename = "UMAP_C5sub_HIV_status.svg", device = "svg")
